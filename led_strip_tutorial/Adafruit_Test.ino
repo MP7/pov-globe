@@ -38,7 +38,7 @@ void loop() {
 */ //colorWipe(strip.Color(0, 0, 0), 1); // Green
  //colorWipe(strip.Color(0, 0, 255), 1); // Blue
  rainbow(20);
- rainbowCycle(20);
+// rainbowCycle(20);
 }
 
 // Fill the dots one after the other with a color
@@ -59,7 +59,8 @@ void rainbow(uint8_t wait) {
       strip.setPixelColor(i, Wheel((i+j) & 255));
     }
     strip.show();
-    delay(wait);
+    
+//    delay(wait);
   }
 }
 

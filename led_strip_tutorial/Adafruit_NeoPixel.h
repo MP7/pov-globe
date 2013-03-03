@@ -65,4 +65,3 @@ class Adafruit_NeoPixel {
     endTime;       // Latch timing reference
 
 };
-

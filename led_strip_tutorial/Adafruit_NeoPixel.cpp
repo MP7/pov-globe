@@ -55,24 +55,6 @@ void Adafruit_NeoPixel::begin(void) {
   digitalWrite(pin, LOW);
 }
 
-
-#ifdef __arm__
-static inline void delayShort(uint32_t) __attribute__((always_inline, unused));
-static inline void delayShort(uint32_t num)
-{
-        asm volatile(
-                "L_%=_delayMicroseconds:"               "\n\t"
-                "subs   %0, #1"                         "\n\t"
-                "bne    L_%=_delayMicroseconds"         "\n"
-//#if F_CPU == 48000000
-                //"nop"					"\n\t"
-//#endif
-                : "+r" (num) :
-        );
-}
-#endif // __arm__
-
-
 void Adafruit_NeoPixel::show(void) {
 
   if(!numLEDs) return;
@@ -109,418 +91,52 @@ void Adafruit_NeoPixel::show(void) {
 
   cli(); // Disable interrupts; need 100% focus on instruction timing
 
-#ifdef __AVR__
+  // Can use nested loop; no need for unrolling.  Very similar to
+  // 16MHz/400KHz code above, but with fewer NOPs and different end.
 
-#if (F_CPU == 8000000UL) // FLORA, Lilypad, Arduino Pro 8 MHz, etc.
+  // 20 inst. clocks per bit: HHHHxxxxxxxxxxxxLLLL
+  // ST instructions:         ^   ^           ^
 
-  if((type & NEO_SPDMASK) == NEO_KHZ800) { // 800 KHz bitstream
+  volatile uint8_t next, bit;
 
-    volatile uint8_t n1, n2 = 0;  // First, next bits out
+  hi   = *port |  pinMask;
+  lo   = hi    & ~pinMask;
+  next = lo;
+  bit  = 8;
 
-    // Squeezing an 800 KHz stream out of an 8 MHz chip requires code
-    // specific to each PORT register.  At present this is only written
-    // to work with pins on PORTD or PORTB, the most likely use case --
-    // this covers all the pins on the Adafruit Flora and the bulk of
-    // digital pins on the Arduino Pro 8 MHz (keep in mind, this code
-    // doesn't even get compiled for 16 MHz boards like the Uno, Mega,
-    // Leonardo, etc., so don't bother extending this out of hand).
-    // Additional PORTs could be added if you really need them, just
-    // duplicate the else and loop and change the PORT.  Each add'l
-    // PORT will require about 150(ish) bytes of program space.
+  asm volatile(
+   "head20:\n\t"          // Clk  Pseudocode    (T =  0)
+    "st   %a0, %1\n\t"    // 2    PORT = hi     (T =  2)
+    "sbrc %2, 7\n\t"      // 1-2  if(b & 128)
+     "mov  %4, %1\n\t"    // 0-1   next = hi    (T =  4)
+    "st   %a0, %4\n\t"    // 2    PORT = next   (T =  6)
+    "mov  %4, %5\n\t"     // 1    next = lo     (T =  7)
+    "dec  %3\n\t"         // 1    bit--         (T =  8)
+    "breq nextbyte20\n\t" // 1-2  if(bit == 0)
+    "rol  %2\n\t"         // 1    b <<= 1       (T = 10)
+    "mul  r0, r0\n\t"     // 2    nop nop       (T = 12)
+    "mul  r0, r0\n\t"     // 2    nop nop       (T = 14)
+    "mul  r0, r0\n\t"     // 2    nop nop       (T = 16)
+    "st   %a0, %5\n\t"    // 2    PORT = lo     (T = 18)
+    "rjmp head20\n\t"     // 2    -> head20 (next bit out)
+   "nextbyte20:\n\t"      //                    (T = 10)
+    "nop\n\t"             // 1    nop           (T = 11)
+    "ldi  %3, 8\n\t"      // 1    bit = 8       (T = 12)
+    "ld   %2, %a6+\n\t"   // 2    b = *ptr++    (T = 14)
+    "sbiw %7, 1\n\t"      // 2    i--           (T = 16)
+    "st   %a0, %5\n\t"    // 2    PORT = lo     (T = 18)
+    "brne head20\n\t"     // 2    if(i != 0) -> head20 (next byte)
+    ::
+    "e" (port),          // %a0
+    "r" (hi),            // %1
+    "r" (b),             // %2
+    "r" (bit),           // %3
+    "r" (next),          // %4
+    "r" (lo),            // %5
+    "e" (ptr),           // %a6
+    "w" (i)              // %7
+  ); // end asm
 
-    // 10 instruction clocks per bit: HHxxxxxLLL
-    // OUT instructions:              ^ ^    ^
-
-    if(port == &PORTD) {
-
-      hi = PORTD |  pinMask;
-      lo = hi    & ~pinMask;
-      n1 = lo;
-      if(b & 0x80) n1 = hi;
-
-      // Dirty trick here: meaningless MULs are used to delay two clock
-      // cycles in one instruction word (rather than using two NOPs).
-      // This was necessary in order to squeeze the loop down to exactly
-      // 64 words -- the maximum possible for a relative branch.
-
-      asm volatile(
-       "headD:\n\t"         // Clk  Pseudocode
-        // Bit 7:
-        "out  %0, %1\n\t"   // 1    PORT = hi
-        "mov  %3, %4\n\t"   // 1    n2   = lo
-        "out  %0, %2\n\t"   // 1    PORT = n1
-        "mul  r0, r0\n\t"   // 2    nop nop
-        "sbrc %5, 6\n\t"    // 1-2  if(b & 0x40)
-         "mov %3, %1\n\t"   // 0-1    n2 = hi
-        "out  %0, %4\n\t"   // 1    PORT = lo
-        "mul  r0, r0\n\t"   // 2    nop nop
-        // Bit 6:
-        "out  %0, %1\n\t"   // 1    PORT = hi
-        "mov  %2, %4\n\t"   // 1    n1   = lo
-        "out  %0, %3\n\t"   // 1    PORT = n2
-        "mul  r0, r0\n\t"   // 2    nop nop
-        "sbrc %5, 5\n\t"    // 1-2  if(b & 0x20)
-         "mov %2, %1\n\t"   // 0-1    n1 = hi
-        "out  %0, %4\n\t"   // 1    PORT = lo
-        "mul  r0, r0\n\t"   // 2    nop nop
-        // Bit 5:
-        "out  %0, %1\n\t"   // 1    PORT = hi
-        "mov  %3, %4\n\t"   // 1    n2   = lo
-        "out  %0, %2\n\t"   // 1    PORT = n1
-        "mul  r0, r0\n\t"   // 2    nop nop
-        "sbrc %5, 4\n\t"    // 1-2  if(b & 0x10)
-         "mov %3, %1\n\t"   // 0-1    n2 = hi
-        "out  %0, %4\n\t"   // 1    PORT = lo
-        "mul  r0, r0\n\t"   // 2    nop nop
-        // Bit 4:
-        "out  %0, %1\n\t"   // 1    PORT = hi
-        "mov  %2, %4\n\t"   // 1    n1   = lo
-        "out  %0, %3\n\t"   // 1    PORT = n2
-        "mul  r0, r0\n\t"   // 2    nop nop
-        "sbrc %5, 3\n\t"    // 1-2  if(b & 0x08)
-         "mov %2, %1\n\t"   // 0-1    n1 = hi
-        "out  %0, %4\n\t"   // 1    PORT = lo
-        "mul  r0, r0\n\t"   // 2    nop nop
-        // Bit 3:
-        "out  %0, %1\n\t"   // 1    PORT = hi
-        "mov  %3, %4\n\t"   // 1    n2   = lo
-        "out  %0, %2\n\t"   // 1    PORT = n1
-        "mul  r0, r0\n\t"   // 2    nop nop
-        "sbrc %5, 2\n\t"    // 1-2  if(b & 0x04)
-         "mov %3, %1\n\t"   // 0-1    n2 = hi
-        "out  %0, %4\n\t"   // 1    PORT = lo
-        "mul  r0, r0\n\t"   // 2    nop nop
-        // Bit 2:
-        "out  %0, %1\n\t"   // 1    PORT = hi
-        "mov  %2, %4\n\t"   // 1    n1   = lo
-        "out  %0, %3\n\t"   // 1    PORT = n2
-        "mul  r0, r0\n\t"   // 2    nop nop
-        "sbrc %5, 1\n\t"    // 1-2  if(b & 0x02)
-         "mov %2, %1\n\t"   // 0-1    n1 = hi
-        "out  %0, %4\n\t"   // 1    PORT = lo
-        "mul  r0, r0\n\t"   // 2    nop nop
-        // Bit 1:
-        "out  %0, %1\n\t"   // 1    PORT = hi
-        "mov  %3, %4\n\t"   // 1    n2   = lo
-        "out  %0, %2\n\t"   // 1    PORT = n1
-        "mul  r0, r0\n\t"   // 2    nop nop
-        "sbrc %5, 0\n\t"    // 1-2  if(b & 0x01)
-         "mov %3, %1\n\t"   // 0-1    n2 = hi
-        "out  %0, %4\n\t"   // 1    PORT = lo
-        "sbiw %6, 1\n\t"    // 2    i--  (dec. but don't act on zero flag yet)
-        // Bit 0:
-        "out  %0, %1\n\t"   // 1    PORT = hi
-        "mov  %2, %4\n\t"   // 1    n1   = lo
-        "out  %0, %3\n\t"   // 1    PORT = n2
-        "ld   %5, %a7+\n\t" // 2    b = *ptr++
-        "sbrc %5, 7\n\t"    // 1-2  if(b & 0x80)
-         "mov %2, %1\n\t"   // 0-1    n1 = hi
-        "out  %0, %4\n\t"   // 1    PORT = lo
-        "brne headD\n"      // 2    while(i) (zero flag determined above)
-        ::
-        "I" (_SFR_IO_ADDR(PORTD)), // %0
-        "r" (hi),                  // %1
-        "r" (n1),                  // %2
-        "r" (n2),                  // %3
-        "r" (lo),                  // %4
-        "r" (b),                   // %5
-        "w" (i),                   // %6
-        "e" (ptr)                  // %a7
-      ); // end asm
-
-    } else if(port == &PORTB) {
-
-      // Same as above, just switched to PORTB and stripped of comments.
-      hi = PORTB |  pinMask;
-      lo = hi    & ~pinMask;
-      n1 = lo;
-      if(b & 0x80) n1 = hi;
-      asm volatile(
-       "headB:\n\t"
-        "out  %0, %1\n\t"
-        "mov  %3, %4\n\t"
-        "out  %0, %2\n\t"
-        "mul  r0, r0\n\t"
-        "sbrc %5, 6\n\t"
-         "mov %3, %1\n\t"
-        "out  %0, %4\n\t"
-        "mul  r0, r0\n\t"
-        "out  %0, %1\n\t"
-        "mov  %2, %4\n\t"
-        "out  %0, %3\n\t"
-        "mul  r0, r0\n\t"
-        "sbrc %5, 5\n\t"
-         "mov %2, %1\n\t"
-        "out  %0, %4\n\t"
-        "mul  r0, r0\n\t"
-        "out  %0, %1\n\t"
-        "mov  %3, %4\n\t"
-        "out  %0, %2\n\t"
-        "mul  r0, r0\n\t"
-        "sbrc %5, 4\n\t"
-         "mov %3, %1\n\t"
-        "out  %0, %4\n\t"
-        "mul  r0, r0\n\t"
-        "out  %0, %1\n\t"
-        "mov  %2, %4\n\t"
-        "out  %0, %3\n\t"
-        "mul  r0, r0\n\t"
-        "sbrc %5, 3\n\t"
-         "mov %2, %1\n\t"
-        "out  %0, %4\n\t"
-        "mul  r0, r0\n\t"
-        "out  %0, %1\n\t"
-        "mov  %3, %4\n\t"
-        "out  %0, %2\n\t"
-        "mul  r0, r0\n\t"
-        "sbrc %5, 2\n\t"
-         "mov %3, %1\n\t"
-        "out  %0, %4\n\t"
-        "mul  r0, r0\n\t"
-        "out  %0, %1\n\t"
-        "mov  %2, %4\n\t"
-        "out  %0, %3\n\t"
-        "mul  r0, r0\n\t"
-        "sbrc %5, 1\n\t"
-         "mov %2, %1\n\t"
-        "out  %0, %4\n\t"
-        "mul  r0, r0\n\t"
-        "out  %0, %1\n\t"
-        "mov  %3, %4\n\t"
-        "out  %0, %2\n\t"
-        "mul  r0, r0\n\t"
-        "sbrc %5, 0\n\t"
-         "mov %3, %1\n\t"
-        "out  %0, %4\n\t"
-        "sbiw %6, 1\n\t"
-        "out  %0, %1\n\t"
-        "mov  %2, %4\n\t"
-        "out  %0, %3\n\t"
-        "ld   %5, %a7+\n\t"
-        "sbrc %5, 7\n\t"
-         "mov %2, %1\n\t"
-        "out  %0, %4\n\t"
-        "brne headB\n" :: "I" (_SFR_IO_ADDR(PORTB)), "r" (hi),
-          "r" (n1), "r" (n2), "r" (lo), "r" (b), "w" (i), "e" (ptr)
-      ); // end asm
-    } // endif PORTB
-  } // end 800 KHz, see comments later re 'else'
-
-#elif (F_CPU == 16000000UL)
-
-  if((type & NEO_SPDMASK) == NEO_KHZ400) { // 400 KHz bitstream
-
-    // The 400 KHz clock on 16 MHz MCU is the most 'relaxed' version.
-    // Unrolling the inner loop for each bit is not necessary.
-
-    // 40 inst. clocks per bit: HHHHHHHHxxxxxxxxxxxxxxxxxxxxxxxxLLLLLLLL
-    // ST instructions:         ^       ^                       ^
-
-    volatile uint8_t next, bit;
-
-    hi   = *port |  pinMask;
-    lo   = hi    & ~pinMask;
-    next = lo;
-    bit  = 8;
-
-    asm volatile(
-     "head40:\n\t"          // Clk  Pseudocode    (T =  0)
-      "st   %a0, %1\n\t"    // 2    PORT = hi     (T =  2)
-      "sbrc %2, 7\n\t"      // 1-2  if(b & 128)
-       "mov  %4, %1\n\t"    // 0-1   next = hi    (T =  4)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T =  6)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T =  8)
-      "st   %a0, %4\n\t"    // 2    PORT = next   (T = 10)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 12)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 14)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 16)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 18)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 20)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 22)
-      "nop\n\t"             // 1    nop           (T = 23)
-      "mov  %4, %5\n\t"     // 1    next = lo     (T = 24)
-      "dec  %3\n\t"         // 1    bit--         (T = 25)
-      "breq nextbyte40\n\t" // 1-2  if(bit == 0)
-      "rol  %2\n\t"         // 1    b <<= 1       (T = 27)
-      "nop\n\t"             // 1    nop           (T = 28)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 30)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 32)
-      "st   %a0, %5\n\t"    // 2    PORT = lo     (T = 34)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 36)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 38)
-      "rjmp head40\n\t"     // 2    -> head40 (next bit out)
-     "nextbyte40:\n\t"      //                    (T = 27)
-      "ldi  %3, 8\n\t"      // 1    bit = 8       (T = 28)
-      "ld   %2, %a6+\n\t"   // 2    b = *ptr++    (T = 30)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 32)
-      "st   %a0, %5\n\t"    // 2    PORT = lo     (T = 34)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 36)
-      "sbiw %7, 1\n\t"      // 2    i--           (T = 38)
-      "brne head40\n\t"     // 1-2  if(i != 0) -> head40 (next byte)
-      ::
-      "e" (port),          // %a0
-      "r" (hi),            // %1
-      "r" (b),             // %2
-      "r" (bit),           // %3
-      "r" (next),          // %4
-      "r" (lo),            // %5
-      "e" (ptr),           // %a6
-      "w" (i)              // %7
-    ); // end asm
-
-  } // See comments later re 'else'
-
-#elif ((F_CPU == 16500000UL) && defined(__AVR_ATtiny85__))
-  if((type & NEO_SPDMASK) == NEO_KHZ400) {
-    // Empty case.  400 KHz pixels not supported on 16.5 MHz ATtiny85.
-  } // See comments later re 'else'
-  // 800 KHz pixel support on 16.5 MHz ATtiny is experimental and
-  // NOT guaranteed to work.  It's essentially the same loop as the
-  // 16 MHz ATmega code...as a result, the timing is slightly off
-  // (825 KHz vs 800), but the WS2811 datasheet suggests this is
-  // within the allowable margin of error.
-#else
- #error "CPU SPEED NOT SUPPORTED"
-#endif
-
-  // This bizarre floating 'else' is intentional.  Only one of the above
-  // blocks is actually compiled (depending on CPU speed), each with one
-  // specific 'if' case for pixel speed.  This block now handles the
-  // common alternate case for either: 800 KHz pixels w/16 MHz CPU, or
-  // 400 KHz pixels w/8 MHz CPU.  Instruction timing is the same.
-  else {
-
-    // Can use nested loop; no need for unrolling.  Very similar to
-    // 16MHz/400KHz code above, but with fewer NOPs and different end.
-
-    // 20 inst. clocks per bit: HHHHxxxxxxxxxxxxLLLL
-    // ST instructions:         ^   ^           ^
-
-    volatile uint8_t next, bit;
-
-    hi   = *port |  pinMask;
-    lo   = hi    & ~pinMask;
-    next = lo;
-    bit  = 8;
-
-    asm volatile(
-     "head20:\n\t"          // Clk  Pseudocode    (T =  0)
-      "st   %a0, %1\n\t"    // 2    PORT = hi     (T =  2)
-      "sbrc %2, 7\n\t"      // 1-2  if(b & 128)
-       "mov  %4, %1\n\t"    // 0-1   next = hi    (T =  4)
-      "st   %a0, %4\n\t"    // 2    PORT = next   (T =  6)
-      "mov  %4, %5\n\t"     // 1    next = lo     (T =  7)
-      "dec  %3\n\t"         // 1    bit--         (T =  8)
-      "breq nextbyte20\n\t" // 1-2  if(bit == 0)
-      "rol  %2\n\t"         // 1    b <<= 1       (T = 10)
-#ifdef __AVR_ATtiny85__
-      "nop\n\t"             // 1 ea.
-      "nop\n\t"             // No MUL on ATtiny
-      "nop\n\t"
-      "nop\n\t"
-      "nop\n\t"
-      "nop\n\t"
-#else
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 12)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 14)
-      "mul  r0, r0\n\t"     // 2    nop nop       (T = 16)
-#endif
-      "st   %a0, %5\n\t"    // 2    PORT = lo     (T = 18)
-      "rjmp head20\n\t"     // 2    -> head20 (next bit out)
-     "nextbyte20:\n\t"      //                    (T = 10)
-      "nop\n\t"             // 1    nop           (T = 11)
-      "ldi  %3, 8\n\t"      // 1    bit = 8       (T = 12)
-      "ld   %2, %a6+\n\t"   // 2    b = *ptr++    (T = 14)
-      "sbiw %7, 1\n\t"      // 2    i--           (T = 16)
-      "st   %a0, %5\n\t"    // 2    PORT = lo     (T = 18)
-      "brne head20\n\t"     // 2    if(i != 0) -> head20 (next byte)
-      ::
-      "e" (port),          // %a0
-      "r" (hi),            // %1
-      "r" (b),             // %2
-      "r" (bit),           // %3
-      "r" (next),          // %4
-      "r" (lo),            // %5
-      "e" (ptr),           // %a6
-      "w" (i)              // %7
-    ); // end asm
-
-  } // end wacky else (see comment above)
-
-#endif // __AVR__
-
-
-
-#ifdef __MK20DX128__ // Teensy 3.0
-
-// This implementation may not be quite perfect, but it seems to work
-// reasonably well with an actual 20 LED WS2811 strip.  The timing at
-// 48 MHz is off a bit, perhaps due to flash cache misses?  Ideally
-// this code should execute from RAM to eliminate slight timing
-// differences between flash caches hits and misses.  But it seems to
-// quite well.  More testing is needed with longer strips.
-#if F_CPU == 96000000
-        #define DELAY_800_T0H       2
-        #define DELAY_800_T0L       25
-        #define DELAY_800_T1H       16
-        #define DELAY_800_T1L       11
-        #define DELAY_400_T0H       8
-        #define DELAY_400_T0L       56
-        #define DELAY_400_T1H       33
-        #define DELAY_400_T1L       31
-#elif F_CPU == 48000000
-        #define DELAY_800_T0H       1
-        #define DELAY_800_T0L       13
-        #define DELAY_800_T1H       8
-        #define DELAY_800_T1L       6
-        #define DELAY_400_T0H       4
-        #define DELAY_400_T0L       29
-        #define DELAY_400_T1H       16
-        #define DELAY_400_T1L       17
-#elif F_CPU == 24000000
-        #error "24 MHz not supported, use Tools > CPU Speed at 48 or 96 MHz"
-#endif
-	uint8_t *p   = pixels;
-	uint8_t *end = pixels + numBytes;
-	volatile uint8_t *set = portSetRegister(pin);
-	volatile uint8_t *clr = portClearRegister(pin);
-	if ((type & NEO_SPDMASK) == NEO_KHZ800) { // 800 KHz bitstream
-		while (p < end) {
-			uint8_t pix = *p++;
-			for (int mask = 0x80; mask; mask >>= 1) {
-				if (pix & mask) {
-					*set = 1;
-					delayShort(DELAY_800_T1H);
-					*clr = 1;
-					delayShort(DELAY_800_T1L);
-				} else {
-					*set = 1;
-					delayShort(DELAY_800_T0H);
-					*clr = 1;
-					delayShort(DELAY_800_T0L);
-				}
-			}
-		}
-	} else { // 400 kHz bitstream
-		while (p < end) {
-			uint8_t pix = *p++;
-			for (int mask = 0x80; mask; mask >>= 1) {
-				if (pix & mask) {
-					*set = 1;
-					delayShort(DELAY_400_T1H);
-					*clr = 1;
-					delayShort(DELAY_400_T1L);
-				} else {
-					*set = 1;
-					delayShort(DELAY_400_T0H);
-					*clr = 1;
-					delayShort(DELAY_400_T0L);
-				}
-			}
-		}
-	}
-
-#endif // __MK20DX128__ Teensy 3.0
 
   sei();              // Re-enable interrupts
   endTime = micros(); // Note EOD time for latch on next call
@@ -573,4 +189,3 @@ uint32_t Adafruit_NeoPixel::getPixelColor(uint16_t n) {
 uint16_t Adafruit_NeoPixel::numPixels(void) {
   return numLEDs;
 }
-
