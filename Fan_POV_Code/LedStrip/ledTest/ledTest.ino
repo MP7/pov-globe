@@ -1,4 +1,5 @@
 #include <Adafruit_NeoPixel.h>
+#include "test.h" //this is a test image
 
 // Parameter 1 = number of pixels in strip
 // Parameter 2 = pin number (most are valid)
@@ -7,14 +8,21 @@
 //   NEO_GRB     Pixels are wired for GRB bitstream
 //   NEO_KHZ400  400 KHz bitstream (e.g. FLORA pixels)
 //   NEO_KHZ800  800 KHz bitstream (e.g. High Density LED strip)
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(60, 6, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(30, 6, NEO_GRB + NEO_KHZ800);
 
 int sensorPin = A0;    // select the input pin for the potentiometer
 int sensorValue = 0;  // variable to store the value coming from the sensor
 boolean oneCycle = false;
-int count = 0; // Count the number of 
+int count = 0; // Count the number of microseconds it took to complete a rotation
 boolean front = false;
 boolean back = false;
+int colIndex = 0; //Column index of image
+
+
+
+#define MAG_HIGH 350  //First magnet
+#define MAG_LOW 100    //Second magnet
+
 
 
 void setup() {
@@ -32,37 +40,98 @@ void loop() {
   
    //rainbow(20);
    //rainbowCycle(20);
-   hallEffect();
+   //hallEffect();
+   drawPicture();
+   //countHorizontalRes();
 }
 
-void hallEffect(){
-  
-  // read the value from the sensor:
+boolean ReadHallEffect(){  //Reads the hall effect sensor.  Returns true if both magnets have been passed
   sensorValue = analogRead(sensorPin);    
-  if(!oneCycle){//one cycle
-      if(sensorValue >350) front = true;//meet 1st magnet, value read ~ 1023 
-      if(sensorValue <100) back = true; //meet 2nd magnet, value read ~ 5 or 6
-
-   }
-    oneCycle = front && back;
-  if(oneCycle) {  
-    lightUP(strip.Color(255, 0, 0), 1);
-    lightUP(strip.Color(0, 255, 0), 1);
-    lightUP(strip.Color(0, 0, 255), 1);
-    lightUP(strip.Color(0, 0, 0), 0);
-    count++; 
-    oneCycle = false;  
-    front = false;
-    back = false;
-   /* if(count >= 2 || count == 1000){     
-    Serial.println(sensorValue); 
-    Serial.print("count");
-    Serial.println(count);
-    time = millis();
-    Serial.println(time);}
-    }*/
+  if(sensorValue > MAG_HIGH) front = true;
+  if(sensorValue < MAG_LOW)  back = true;
+  return front && back;
 }
 
+void resetHallEffect(){
+ front = false;
+ back = false;
+ oneCycle = false; 
+}
+
+void countHorizontalRes(){//Makes one cycle and displays the number of milliseconds it took to rotate
+ oneCycle = ReadHallEffect();
+ if(oneCycle){ 
+   resetHallEffect();
+   lightUpPixel(strip.Color(0,255, 0), count, 1);
+   count = 0;
+ }else{
+   delayMicroseconds(1);
+   count++;
+ }
+}
+
+
+void drawPicture(){
+ oneCycle = ReadHallEffect();
+ if(oneCycle){
+ 
+   for(int i = 0 ; i<30; i++){
+     lightUP(strip.Color(255, 0, 0), 1);
+     lightUP(strip.Color(0,255, 0), 1);
+     lightUP(strip.Color(0, 0, 255), 1);
+   }
+   resetHallEffect();
+ } 
+}
+
+//void hallEffect(){
+//  
+//  // read the value from the sensor:
+//  sensorValue = analogRead(sensorPin);    
+//  if(!oneCycle){//one cycle
+//      if(sensorValue >350) front = true;//meet 1st magnet, value read ~ 1023 
+//      if(sensorValue <100) back = true; //meet 2nd magnet, value read ~ 5 or 6
+//
+//   }
+//    oneCycle = front && back;
+//  if(oneCycle) {  
+//    lightUP(strip.Color(255, 0, 0), 1);
+//    lightUP(strip.Color(0, 255, 0), 1);
+//    lightUP(strip.Color(0, 0, 255), 1);
+//    lightUP(strip.Color(0, 0, 0), 0);
+//    count++; 
+//    oneCycle = false;  
+//    front = false;
+//    back = false;
+//   /* if(count >= 2 || count == 1000){     
+//    Serial.println(sensorValue); 
+//    Serial.print("count");
+//    Serial.println(count);
+//    time = millis();
+//    Serial.println(time);}
+//    }*/
+//}
+//
+//}
+
+void lightUpPixelArray(uint32_t* c, uint8_t wait){
+ for(uint16_t i=0; i<strip.numPixels(); i++) {   
+   strip.setPixelColor(i, c[i]);
+ }
+ strip.show();
+ delayMicroseconds(wait);s
+}
+void lightUpPixel(uint32_t c, uint16_t p, uint8_t wait) {
+ for(uint16_t i=0; i<strip.numPixels(); i++) {
+   if(i==p){
+      strip.setPixelColor(i, c); 
+   } 
+   else{
+     strip.setPixelColor(i, strip.Color(0, 0, 0));
+   }
+  }
+  strip.show();
+  delayMicroseconds(wait); 
 }
 
 void lightUP(uint32_t c, uint8_t wait) {
