@@ -36,13 +36,13 @@ void loop() {
   //colorWipe(strip.Color(0, 255, 0), 50); // Green
   //colorWipe(strip.Color(0, 0, 255), 50); // Blue
   //lightUP(strip.Color(0, 0, 0), 50);
- // lightUP(strip.Color(0, 0, 0), 50);
+  // lightUP(strip.Color(0, 0, 0), 50);
   
-   //rainbow(20);
-   //rainbowCycle(20);
-   //hallEffect();
-   drawPicture();
-   //countHorizontalRes();
+  //rainbow(20);
+  //rainbowCycle(20);
+  //hallEffect();
+  drawPicture();
+  //countHorizontalRes();
 }
 
 boolean ReadHallEffect(){  //Reads the hall effect sensor.  Returns true if both magnets have been passed
@@ -113,6 +113,14 @@ void drawPicture(){
 //}
 //
 //}
+
+void lightUpCol(){
+ for(uint16_t i=0; i<strip.numPixels(); i++) {   
+   uint32_t = pgm_read_byte(&(Image[colIndex][i])); 
+   strip.setPixelColor(i, c[i]);
+ }
+  
+}
 
 void lightUpPixelArray(uint32_t* c, uint8_t wait){
  for(uint16_t i=0; i<strip.numPixels(); i++) {   

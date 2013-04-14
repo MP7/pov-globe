@@ -3,6 +3,8 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdio.h>
+#include <stdint.h>
 //#include <WinGDI.h>
 
 #define numRows 30
@@ -44,8 +46,17 @@ struct Pixel{
 	char b;
 	std::string str(){
 		std::stringstream ss;
-		ss<<std::bitset<8>(r)<<std::bitset<8>(g)<<std::bitset<8>(b);
+		//ss<<"B"<<std::bitset<8>(r)<<",B"<<std::bitset<8>(g)<<",B"<<std::bitset<8>(b);
+		/*uint8_t red = r;
+		uint8_t green = g;
+		uint8_t blue = b;
+		ss<<red<<","<<green<<","<<blue;
 		return ss.str();
+		*/
+		char S[12];
+		int n = sprintf(S,"%d,%d,%d",(unsigned char)r,(unsigned char)g,(unsigned char)b);
+		std::string s(S);
+		return s;
 	}
 };
 /*
@@ -56,7 +67,7 @@ Pixel* row2col(Pixel* image, int rows, int cols){
 	Pixel* newImage = (Pixel*) malloc(rows*cols*sizeof(Pixel));
 	for(int i = 0 ; i<rows;i++){
 		for(int j = 0; j<cols; j++){
-			std::cout<<"i "<<i<<" j "<<j<<" j*cols+i "<<(j*cols+i)<<" j+i*rows"<<(j+i*rows)<<std::endl;
+			//std::cout<<"i "<<i<<" j "<<j<<" j*cols+i "<<(j*cols+i)<<" j+i*rows"<<(j+i*rows)<<std::endl;
 			newImage[j*rows+i].r = image[j+i*cols].r;
 			newImage[j*rows+i].g = image[j+i*cols].g;
 			newImage[j*rows+i].b = image[j+i*cols].b;
@@ -71,7 +82,7 @@ int main(){
 	int numBytes = numRows*numCols*3;
 	int header = 54;  //end of bmp header
 
-	std::ifstream file_in("smily.bmp",std::ifstream::binary);
+	std::ifstream file_in("smily7.bmp",std::ifstream::binary);
 	std::cout<<"Found file"<<std::endl;
 	std::ofstream out("test.h",std::ifstream::binary);
 	char* bmpfile = (char*)malloc((numBytes+header)*sizeof(char));
@@ -97,9 +108,9 @@ int main(){
 	//for(int i = 0; i<numRows; i++){
 	//	out<<"{";
 	//	for(int j = 0; j<numCols-1; j++){
-	//		out<<"B"<<image[i*numRows+j].str()<<",";
+	//		out<<"B"<<image[i*numCols+j].str()<<",";
 	//	}
-	//	out<<"B"<<image[i*numRows+(numCols-1)].str()<<"},"<<std::endl;
+	//	out<<"B"<<image[i*numCols+(numCols-1)].str()<<"},"<<std::endl;
 	//}
 	//out<<"};"<<std::endl;
 	//out.close();
@@ -108,14 +119,25 @@ int main(){
 	image = row2col(image,numRows,numCols);
 	int rows = numCols;
 	int cols = numRows;
-	out<<"prog_uint8_t Image[numRows][LEDEights] PROGMEM = {"<<std::endl;
-	for(int i = 0 ; i <rows; i++){
+	out<<"#include <avr/pgmspace.h>"<<std::endl;
+	out<<"prog_uint8_t Image["<<rows<<"]["<<cols*3<<"] PROGMEM = {"<<std::endl;
+	//Crashes at element 6700
+	std::cout<<"rows: "<<rows<<" cols: "<<cols<<std::endl;
+	for(int i = 0 ; i <rows ; i++){
 		out<<"{";
-		for(int j = 0 ; j<cols ;j++){
-			std::cout<<(j+i*rows)<<std::endl;
-			out<<"B"<<image[j+i*rows].str()<<",";
+		for(int j = 0 ; j<cols-1 ;j++){
+			//std::cout<<(j+i*rows)<<std::endl;
+			//out<<"B"<<image[j+i*cols].r<<",";
+			//out<<"B"<<image[j+i*cols].g<<",";
+			//out<<"B"<<image[j+i*cols].b<<",";
+			out<<image[j+i*cols].str()<<",";
+			
 		}
-		out<<"B"<<image[(cols-1)+i*rows].str()<<"}"<<std::endl;
+		if(i==rows-1){
+			out<<image[(cols-1)+i*cols].str()<<"}"<<std::endl;
+		}else{
+			out<<image[(cols-1)+i*cols].str()<<"},"<<std::endl;
+		}
 	}
 	out<<"};"<<std::endl;
 	out.close();
