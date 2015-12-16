@@ -1,0 +1,1 @@
+Example library for Arduino https://github.com/adafruit/Adafruit_NeoPixel

@@ -1,0 +1,1 @@
+A POV-Globe is a circular strip of LEDs that can spin very fast in order to generate a spherical image
